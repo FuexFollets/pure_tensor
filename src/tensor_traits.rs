@@ -1,5 +1,5 @@
 use std::marker::PhantomData;
-use std::ops::{Add, Div, Index, Mul, Neg, Sub};
+// use std::ops::{Add, Div, Index, Mul, Neg, Sub};
 
 #[allow(unused_macros)]
 macro_rules! ranks_t {
@@ -30,20 +30,119 @@ pub struct Tensor<ScalarT, RanksT, PermuteInfoT, const N_RANKS: usize> {
 }
 
 #[macro_export]
-macro_rules! Tensor {
+macro_rules! permutation {
+    ($first_new_rank:expr, $($new_rank_for_each_index:expr),*) => {
+        [permutation!($($new_rank_for_each_index),*); { $first_new_rank }]
+    };
+
+    ($new_rank_for_each_index:expr) => {
+        [(); { $new_rank_for_each_index }]
+    };
+}
+
+// cursed
+#[allow(unused_macros)]
+macro_rules! default_permutation {
+    ($num_ranks:expr, $separator_1:ty,
+     $subtractor:expr, $separator_2:ty,
+     $rank_length:expr, $($other_rank_lengths:expr),*) => {
+        [
+            default_permutation!(
+                $num_ranks,
+                (),
+                ($subtractor - 1),
+                (),
+                $($other_rank_lengths),*
+                );
+            { $num_ranks - $subtractor }
+        ]
+    };
+
+    ($num_ranks:expr, $separator_1:ty,
+     $subtractor:expr, $separator_2:ty,
+     $rank_length:expr) => {
+        [(); { $num_ranks - $subtractor }]
+    };
+
+    ($scalar_type:ty, $rank_length:expr, $($other_rank_lengths:expr),*) => {
+        default_permutation!(
+            num_ranks!($scalar_type, $rank_length, $($other_rank_lengths),*),
+            (),
+            num_ranks!($scalar_type, $rank_length, $($other_rank_lengths),*),
+            (),
+            $rank_length,
+            $($other_rank_lengths),*
+        )
+    };
+}
+
+#[macro_export]
+macro_rules! tensor {
     ($scalar_type:ty, $rank_length:expr, $($other_rank_lengths:expr),*) =>
     {
         Tensor<
             $scalar_type,
             ranks_t!($scalar_type, $rank_length, $($other_rank_lengths),*),
-            i32,
+            default_permutation!($scalar_type, $rank_length, $($other_rank_lengths),*),
             { num_ranks!($scalar_type, $rank_length, $($other_rank_lengths),*) },
         >
+    };
+
+    ($scalar_type:ty, $permutation:ty, $rank_length:expr, $($other_rank_lengths:expr),*) =>
+    {
+        Tensor<
+            $scalar_type,
+            ranks_t!($scalar_type, $rank_length, $($other_rank_lengths),*),
+            $permutation,
+            { num_ranks!($scalar_type, $rank_length, $($other_rank_lengths),*) },
+        >
+    };
+}
+
+pub trait NumRanks {
+    const NUM_RANKS: usize;
+
+    fn num_ranks() -> usize {
+        Self::NUM_RANKS
+    }
+}
+
+impl<T, const N: usize> NumRanks for [T; N]
+where
+    T: NumRanks,
+{
+    const NUM_RANKS: usize = 1 + T::NUM_RANKS;
+}
+
+impl NumRanks for () {
+    const NUM_RANKS: usize = 0;
+}
+
+impl<ScalarT, RanksT, PermuteInfoT, const N_RANKS: usize> NumRanks
+    for Tensor<ScalarT, RanksT, PermuteInfoT, N_RANKS>
+where
+    PermuteInfoT: NumRanks,
+{
+    const NUM_RANKS: usize = PermuteInfoT::NUM_RANKS;
+}
+
+impl<ScalarT, RanksT, PermuteInfoT, const N_RANKS: usize> Default
+    for Tensor<ScalarT, RanksT, PermuteInfoT, N_RANKS>
+where
+    RanksT: Default,
+{
+    fn default() -> Self {
+        Self {
+            components: RanksT::default(),
+            _phantom: PhantomData,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn test_create_ranks_t() {
         type T = ranks_t!(i32, 10, 3 * 7);
@@ -79,9 +178,28 @@ mod tests {
 
     #[test]
     fn test_tensor_fields() {
-        use super::*;
-
         #[allow(dead_code)]
-        type T = Tensor!(f64, 10, 3, 290, 1, 1, 44, 3);
+        type T = tensor!(f64, 10, 3, 290, 1, 1, 44, 3);
+        use std::any::type_name;
+
+        dbg!(type_name::<T>());
+    }
+
+    #[test]
+    fn test_default_permutation() {
+        type P = default_permutation!(f64, 10, 3, 290, 1, 1, 44, 3);
+        use std::any::type_name;
+
+        dbg!(type_name::<P>());
+        dbg!(P::NUM_RANKS);
+    }
+
+    #[test]
+    fn test_tensor_meta() {
+        type T = tensor!(f64, 10, 3, 290, 1, 1, 44, 3);
+        use std::any::type_name;
+
+        dbg!(type_name::<T>());
+        dbg!(T::NUM_RANKS);
     }
 }
